@@ -14,9 +14,15 @@ def calculate_rsi(data: pd.Series, period: int = 14) -> pd.Series:
     delta = data.diff()
     gain = (delta.where(delta > 0, 0)).rolling(window=period).mean()
     loss = (-delta.where(delta < 0, 0)).rolling(window=period).mean()
+    
+    # Avoid division by zero
+    loss = loss.replace(0, np.nan)
+    
     rs = gain / loss
     rsi = 100 - (100 / (1 + rs))
-    return rsi
+    
+    # Fill NaNs resulting from division by zero or start of data
+    return rsi.fillna(50)
 
 
 def calculate_macd(data: pd.Series, fast: int = 12, slow: int = 26, signal: int = 9) -> Dict[str, pd.Series]:
@@ -35,8 +41,10 @@ def calculate_bollinger_bands(data: pd.Series, period: int = 20, std_dev: int = 
     std = data.rolling(window=period).std()
     upper = sma + (std * std_dev)
     lower = sma - (std * std_dev)
-    width = ((upper - lower) / sma) * 100
-    return {'upper': upper, 'middle': sma, 'lower': lower, 'width': width}
+    # Avoid division by zero
+    sma_safe = sma.replace(0, np.nan)
+    width = ((upper - lower) / sma_safe) * 100
+    return {'upper': upper, 'middle': sma, 'lower': lower, 'width': width.fillna(0)}
 
 
 def calculate_adx(high: pd.Series, low: pd.Series, close: pd.Series, period: int = 14) -> pd.Series:
@@ -52,12 +60,19 @@ def calculate_adx(high: pd.Series, low: pd.Series, close: pd.Series, period: int
     tr = pd.concat([tr1, tr2, tr3], axis=1).max(axis=1)
     
     atr = tr.rolling(window=period).mean()
-    plus_di = 100 * (plus_dm.rolling(window=period).mean() / atr)
-    minus_di = abs(100 * (minus_dm.rolling(window=period).mean() / atr))
     
-    dx = (abs(plus_di - minus_di) / (plus_di + minus_di)) * 100
+    # Avoid division by zero
+    atr_safe = atr.replace(0, np.nan)
+    
+    plus_di = 100 * (plus_dm.rolling(window=period).mean() / atr_safe)
+    minus_di = abs(100 * (minus_dm.rolling(window=period).mean() / atr_safe))
+    
+    sum_di = plus_di + minus_di
+    sum_di_safe = sum_di.replace(0, np.nan)
+    
+    dx = (abs(plus_di - minus_di) / sum_di_safe) * 100
     adx = dx.rolling(window=period).mean()
-    return adx
+    return adx.fillna(0)
 
 
 def calculate_atr(high: pd.Series, low: pd.Series, close: pd.Series, period: int = 14) -> pd.Series:
@@ -74,9 +89,13 @@ def calculate_stochastic(high: pd.Series, low: pd.Series, close: pd.Series,
     """Calculate Stochastic Oscillator."""
     lowest_low = low.rolling(window=k_period).min()
     highest_high = high.rolling(window=k_period).max()
-    k = 100 * (close - lowest_low) / (highest_high - lowest_low)
+    
+    denominator = highest_high - lowest_low
+    denominator = denominator.replace(0, np.nan)
+    
+    k = 100 * (close - lowest_low) / denominator
     d = k.rolling(window=d_period).mean()
-    return {'k': k, 'd': d}
+    return {'k': k.fillna(50), 'd': d.fillna(50)}
 
 
 def calculate_obv(close: pd.Series, volume: pd.Series) -> pd.Series:
@@ -88,8 +107,9 @@ def calculate_obv(close: pd.Series, volume: pd.Series) -> pd.Series:
 def calculate_vwap(high: pd.Series, low: pd.Series, close: pd.Series, volume: pd.Series) -> pd.Series:
     """Calculate Volume Weighted Average Price."""
     typical_price = (high + low + close) / 3
-    vwap = (typical_price * volume).cumsum() / volume.cumsum()
-    return vwap
+    cum_vol = volume.cumsum().replace(0, np.nan)
+    vwap = (typical_price * volume).cumsum() / cum_vol
+    return vwap.fillna(typical_price)
 
 
 def calculate_ema(data: pd.Series, period: int) -> pd.Series:
@@ -109,15 +129,18 @@ def calculate_momentum(data: pd.Series, period: int = 10) -> pd.Series:
 
 def calculate_roc(data: pd.Series, period: int = 10) -> pd.Series:
     """Calculate Rate of Change."""
-    return ((data - data.shift(period)) / data.shift(period)) * 100
+    shift_data = data.shift(period).replace(0, np.nan)
+    return ((data - shift_data) / shift_data) * 100
 
 
 def calculate_williams_r(high: pd.Series, low: pd.Series, close: pd.Series, period: int = 14) -> pd.Series:
     """Calculate Williams %R."""
     highest_high = high.rolling(window=period).max()
     lowest_low = low.rolling(window=period).min()
-    wr = -100 * (highest_high - close) / (highest_high - lowest_low)
-    return wr
+    denominator = highest_high - lowest_low
+    denominator = denominator.replace(0, np.nan)
+    wr = -100 * (highest_high - close) / denominator
+    return wr.fillna(-50)
 
 
 def calculate_cci(high: pd.Series, low: pd.Series, close: pd.Series, period: int = 20) -> pd.Series:
@@ -125,8 +148,9 @@ def calculate_cci(high: pd.Series, low: pd.Series, close: pd.Series, period: int
     typical_price = (high + low + close) / 3
     sma_tp = typical_price.rolling(window=period).mean()
     mean_deviation = typical_price.rolling(window=period).apply(lambda x: np.abs(x - x.mean()).mean())
+    mean_deviation = mean_deviation.replace(0, np.nan)
     cci = (typical_price - sma_tp) / (0.015 * mean_deviation)
-    return cci
+    return cci.fillna(0)
 
 
 def calculate_mfi(high: pd.Series, low: pd.Series, close: pd.Series, volume: pd.Series, period: int = 14) -> pd.Series:
@@ -137,17 +161,18 @@ def calculate_mfi(high: pd.Series, low: pd.Series, close: pd.Series, volume: pd.
     positive_flow = pd.Series(0.0, index=close.index)
     negative_flow = pd.Series(0.0, index=close.index)
     
-    for i in range(1, len(typical_price)):
-        if typical_price.iloc[i] > typical_price.iloc[i-1]:
-            positive_flow.iloc[i] = raw_money_flow.iloc[i]
-        elif typical_price.iloc[i] < typical_price.iloc[i-1]:
-            negative_flow.iloc[i] = raw_money_flow.iloc[i]
+    # We can use vectorization here for speed instead of loop
+    price_diff = typical_price.diff()
+    positive_flow[price_diff > 0] = raw_money_flow[price_diff > 0]
+    negative_flow[price_diff < 0] = raw_money_flow[price_diff < 0]
     
     positive_mf = positive_flow.rolling(window=period).sum()
     negative_mf = negative_flow.rolling(window=period).sum()
     
+    negative_mf = negative_mf.replace(0, np.nan)
+    
     mfi = 100 - (100 / (1 + positive_mf / negative_mf))
-    return mfi
+    return mfi.fillna(50)
 
 
 def calculate_all_metrics(df: pd.DataFrame) -> Optional[Dict[str, Any]]:
@@ -195,7 +220,9 @@ def calculate_all_metrics(df: pd.DataFrame) -> Optional[Dict[str, Any]]:
     
     # Volume metrics
     avg_volume_20 = volume.rolling(window=20).mean()
-    volume_ratio = volume / avg_volume_20
+    # Handle division by zero for volume ratio
+    avg_vol_safe = avg_volume_20.replace(0, np.nan)
+    volume_ratio = volume / avg_vol_safe
     
     # Volatility
     returns = close.pct_change()
@@ -203,8 +230,8 @@ def calculate_all_metrics(df: pd.DataFrame) -> Optional[Dict[str, Any]]:
     
     # Price metrics
     current_price = close.iloc[-1]
-    price_vs_sma20 = ((current_price - sma_20.iloc[-1]) / sma_20.iloc[-1]) * 100 if pd.notna(sma_20.iloc[-1]) else 0
-    price_vs_sma50 = ((current_price - sma_50.iloc[-1]) / sma_50.iloc[-1]) * 100 if pd.notna(sma_50.iloc[-1]) else 0
+    price_vs_sma20 = ((current_price - sma_20.iloc[-1]) / sma_20.iloc[-1]) * 100 if pd.notna(sma_20.iloc[-1]) and sma_20.iloc[-1] != 0 else 0
+    price_vs_sma50 = ((current_price - sma_50.iloc[-1]) / sma_50.iloc[-1]) * 100 if pd.notna(sma_50.iloc[-1]) and sma_50.iloc[-1] != 0 else 0
     
     # 52-week high/low
     high_52w = high.tail(252).max() if len(high) >= 252 else high.max()
